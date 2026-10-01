@@ -1,0 +1,308 @@
+[
+ {
+  "name": "vsop_vx_mercury",
+  "dtype": "f8",
+  "offset": 0,
+  "count": 831
+ },
+ {
+  "name": "vsop_vn_mercury",
+  "dtype": "i4",
+  "offset": 6648,
+  "count": 24
+ },
+ {
+  "name": "vsop_vx_venus",
+  "dtype": "f8",
+  "offset": 6744,
+  "count": 507
+ },
+ {
+  "name": "vsop_vn_venus",
+  "dtype": "i4",
+  "offset": 10800,
+  "count": 24
+ },
+ {
+  "name": "vsop_vx_earth",
+  "dtype": "f8",
+  "offset": 10896,
+  "count": 1218
+ },
+ {
+  "name": "vsop_vn_earth",
+  "dtype": "i4",
+  "offset": 20640,
+  "count": 24
+ },
+ {
+  "name": "vsop_vx_mars",
+  "dtype": "f8",
+  "offset": 20736,
+  "count": 2073
+ },
+ {
+  "name": "vsop_vn_mars",
+  "dtype": "i4",
+  "offset": 37320,
+  "count": 24
+ },
+ {
+  "name": "vsop_vx_jupiter",
+  "dtype": "f8",
+  "offset": 37416,
+  "count": 3168
+ },
+ {
+  "name": "vsop_vn_jupiter",
+  "dtype": "i4",
+  "offset": 62760,
+  "count": 24
+ },
+ {
+  "name": "vsop_vx_saturn",
+  "dtype": "f8",
+  "offset": 62856,
+  "count": 5499
+ },
+ {
+  "name": "vsop_vn_saturn",
+  "dtype": "i4",
+  "offset": 106848,
+  "count": 24
+ },
+ {
+  "name": "vsop_vx_uranus",
+  "dtype": "f8",
+  "offset": 106944,
+  "count": 4140
+ },
+ {
+  "name": "vsop_vn_uranus",
+  "dtype": "i4",
+  "offset": 140064,
+  "count": 24
+ },
+ {
+  "name": "vsop_vx_neptune",
+  "dtype": "f8",
+  "offset": 140160,
+  "count": 1689
+ },
+ {
+  "name": "vsop_vn_neptune",
+  "dtype": "i4",
+  "offset": 153672,
+  "count": 24
+ },
+ {
+  "name": "nut_delaunay",
+  "dtype": "f8",
+  "offset": 153768,
+  "count": 20
+ },
+ {
+  "name": "nut_multarg",
+  "dtype": "i4",
+  "offset": 153928,
+  "count": 530
+ },
+ {
+  "name": "nut_ampsecul",
+  "dtype": "i4",
+  "offset": 156048,
+  "count": 75
+ },
+ {
+  "name": "nut_ampconst",
+  "dtype": "i4",
+  "offset": 156348,
+  "count": 212
+ },
+ {
+  "name": "moon_moonlr_harmonic",
+  "dtype": "i4",
+  "offset": 157196,
+  "count": 18
+ },
+ {
+  "name": "moon_moonlr_power",
+  "dtype": "i4",
+  "offset": 157268,
+  "count": 1
+ },
+ {
+  "name": "moon_moonlr_args",
+  "dtype": "i4",
+  "offset": 157272,
+  "count": 5019
+ },
+ {
+  "name": "moon_moonlr_tabl",
+  "dtype": "i4",
+  "offset": 177348,
+  "count": 1562
+ },
+ {
+  "name": "moon_moonlr_tabb",
+  "dtype": "i4",
+  "offset": 183596,
+  "count": 1
+ },
+ {
+  "name": "moon_moonlr_tabr",
+  "dtype": "i4",
+  "offset": 183600,
+  "count": 1562
+ },
+ {
+  "name": "moon_moonlr_scalars",
+  "dtype": "f8",
+  "offset": 189848,
+  "count": 3
+ },
+ {
+  "name": "moon_moonlat_harmonic",
+  "dtype": "i4",
+  "offset": 189872,
+  "count": 18
+ },
+ {
+  "name": "moon_moonlat_power",
+  "dtype": "i4",
+  "offset": 189944,
+  "count": 1
+ },
+ {
+  "name": "moon_moonlat_args",
+  "dtype": "i4",
+  "offset": 189948,
+  "count": 3157
+ },
+ {
+  "name": "moon_moonlat_tabl",
+  "dtype": "i4",
+  "offset": 202576,
+  "count": 850
+ },
+ {
+  "name": "moon_moonlat_tabb",
+  "dtype": "i4",
+  "offset": 205976,
+  "count": 1
+ },
+ {
+  "name": "moon_moonlat_tabr",
+  "dtype": "i4",
+  "offset": 205980,
+  "count": 1
+ },
+ {
+  "name": "moon_moonlat_scalars",
+  "dtype": "f8",
+  "offset": 205984,
+  "count": 3
+ },
+ {
+  "name": "chap95_n_jupiter",
+  "dtype": "i4",
+  "offset": 206008,
+  "count": 216
+ },
+ {
+  "name": "chap95_amp_jupiter",
+  "dtype": "f8",
+  "offset": 206872,
+  "count": 1296
+ },
+ {
+  "name": "chap95_nu_jupiter",
+  "dtype": "f8",
+  "offset": 217240,
+  "count": 216
+ },
+ {
+  "name": "chap95_n_saturn",
+  "dtype": "i4",
+  "offset": 218968,
+  "count": 192
+ },
+ {
+  "name": "chap95_amp_saturn",
+  "dtype": "f8",
+  "offset": 219736,
+  "count": 1152
+ },
+ {
+  "name": "chap95_nu_saturn",
+  "dtype": "f8",
+  "offset": 228952,
+  "count": 192
+ },
+ {
+  "name": "chap95_n_uranus",
+  "dtype": "i4",
+  "offset": 230488,
+  "count": 129
+ },
+ {
+  "name": "chap95_amp_uranus",
+  "dtype": "f8",
+  "offset": 231004,
+  "count": 774
+ },
+ {
+  "name": "chap95_nu_uranus",
+  "dtype": "f8",
+  "offset": 237196,
+  "count": 129
+ },
+ {
+  "name": "chap95_n_neptune",
+  "dtype": "i4",
+  "offset": 238228,
+  "count": 117
+ },
+ {
+  "name": "chap95_amp_neptune",
+  "dtype": "f8",
+  "offset": 238696,
+  "count": 702
+ },
+ {
+  "name": "chap95_nu_neptune",
+  "dtype": "f8",
+  "offset": 244312,
+  "count": 117
+ },
+ {
+  "name": "chap95_n_pluto",
+  "dtype": "i4",
+  "offset": 245248,
+  "count": 98
+ },
+ {
+  "name": "chap95_amp_pluto",
+  "dtype": "f8",
+  "offset": 245640,
+  "count": 588
+ },
+ {
+  "name": "chap95_nu_pluto",
+  "dtype": "f8",
+  "offset": 250344,
+  "count": 98
+ },
+ {
+  "name": "deltat_ms",
+  "dtype": "i4",
+  "offset": 251128,
+  "count": 28
+ },
+ {
+  "name": "deltat_dt",
+  "dtype": "i4",
+  "offset": 251240,
+  "count": 399
+ }
+]
