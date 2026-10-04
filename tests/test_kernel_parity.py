@@ -185,6 +185,34 @@ def test_series_parallel_matches_serial():
         assert np.array_equal(parallel, serial)
 
 
+def test_topocentric_series_matches_scalar_body():
+    """The topocentric Sun and Moon batches equal one body at a time.
+
+    `obj_planet` computes the solar ecliptic longitude and distance once and
+    threads them into `plans` and `cir_pos` instead of letting each recompute
+    `sunpos`. Sun and Moon reach `cir_pos` through `sun_cir`/`moon_cir` rather
+    than `cir_sky`, so they are the two paths where the threaded arguments
+    differ from the planet path; this pins that the batched and scalar forms
+    agree element for element on both.
+    """
+    dates = np.array([float(mojoephem.Date("2024/1/1")) + i * 0.25 for i in range(37)])
+    obs = mojoephem.Observer()
+    obs.lat, obs.lon, obs.elevation = 51.5, -0.13, 70.0
+    for name in ("Sun", "Moon"):
+        body = getattr(mojoephem, name)()
+        out = mojoephem.compute_series(body.__planet__, dates, obs)
+        for i in (0, 1, 18, 36):
+            obs.date = mojoephem.Date(dates[i])
+            body.compute(obs)
+            # a_ra, a_dec (10, 11), alt, az (13, 14) and the distances (2, 3)
+            assert arcsec(out[i, 10], float(body.a_ra)) < 1e-9
+            assert arcsec(out[i, 11], float(body.a_dec)) < 1e-9
+            assert arcsec(out[i, 13], float(body.alt)) < 1e-9
+            assert arcsec(out[i, 14], float(body.az)) < 1e-9
+            assert abs(out[i, 2] - body.sun_distance) < 1e-12
+            assert abs(out[i, 3] - body.earth_distance) < 1e-12
+
+
 def test_sidereal_time():
     """The local apparent sidereal time matches upstream's Observer method."""
     site = ("51.4778", "0.0015", 70.0)

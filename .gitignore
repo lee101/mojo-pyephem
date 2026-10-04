@@ -1,8 +1,15 @@
-.pixi/
+# Build output
 dist/
-build/*.o
-__pycache__/
 *.so
+build/*.o
+
+# Toolchain / environment
+.pixi/
+.venv/
+# MODULAR_HOME staging left behind by some pixi activations
+share/
+
+# Python
+__pycache__/
 *.pyc
 .pytest_cache/
-.venv/

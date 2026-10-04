@@ -1069,10 +1069,18 @@ def planpos(
 # time), dia (angular diameter in arcsec at 1 AU) and mag (visual
 # magnitude). All angles are in radians, all distances in AU.
 def plans(
-    mj: Float64, p: Int, nrec: Int, reg: Reg
+    mj: Float64,
+    p: Int,
+    nrec: Int,
+    lsn: Float64,
+    rsn: Float64,
+    bsn: Float64,
+    reg: Reg,
 ) -> Tuple[Float64, Float64, Float64, Float64, Float64, Float64, Float64, Float64]:
-    # get sun cartesian; needed only once at mj
-    var lsn, rsn, bsn = sunpos(mj, reg)
+    # The solar ecliptical longitude (lsn), sun distance (rsn) and latitude
+    # (bsn) at `mj` are supplied by the caller. obj_planet already computed
+    # them for the same mjed and passes them straight through, so the sunpos
+    # call is not repeated here.
     var xsn, ysn, zsn = sphcart(lsn, bsn, rsn)
 
     # first find the true position of the planet at mj, then repeat a second
@@ -1999,8 +2007,14 @@ def cir_pos(
     topocentric: Int,
     pressure: Float64,
     temp: Float64,
+    lsn: Float64,
+    rsn: Float64,
     reg: Reg,
 ) -> Tuple[Float64, Float64, Float64, Float64, Float64, Float64, Float64, Float64, Float64, Float64]:
+    # The solar ecliptical longitude (lsn) and sun distance (rsn) at `mjed`
+    # are supplied by the caller. Every caller already computed them at this
+    # mjed to feed cir_pos's own aberration and deflection steps, so the
+    # sunpos call is not repeated here.
     # convert to equatoreal [mean equator, with mean obliquity]
     var ra, dec = ecl_eq(mjed, bet, lam)
     # keep mean coordinates
@@ -2012,9 +2026,6 @@ def cir_pos(
         tra, tdec = precess(mjed, epoch, tra, tdec)
     var astrora = tra
     var astrodec = tdec
-
-    # get sun position
-    var lsn, rsn, _bsn = sunpos(mjed, reg)
 
     # allow for relativistic light bending near the sun (avoid calling
     # deflect() for the sun itself)
@@ -2095,7 +2106,7 @@ def sun_cir(
     # reference upstream and leaves the topocentric one in it.
     var res = cir_pos(
         mjed, bsn, lsn, rsn, dhlong, -bsn, 8, mj, lat, lng, elev, epoch,
-        topocentric, pressure, temp, reg,
+        topocentric, pressure, temp, lsn, rsn, reg,
     )
     dest.unsafe_offset(8)[] = res[0]
     dest.unsafe_offset(9)[] = res[1]
@@ -2163,7 +2174,7 @@ def moon_cir(
     # fill the moon's ra/dec, alt/az and update for topo dist
     var res = cir_pos(
         mjed, bet, lam, edistau, lam, bet, 9, mj, lat, lng, elev, epoch,
-        topocentric, pressure, temp, reg,
+        topocentric, pressure, temp, lsn, rsn, reg,
     )
     dest.unsafe_offset(8)[] = res[0]
     dest.unsafe_offset(9)[] = res[1]
@@ -2214,7 +2225,7 @@ def cir_sky(
     # fill the solar system body's ra/dec and alt/az (updates rho)
     var res = cir_pos(
         mj, bet, lam, rho, lpd, psi, p, mjd, lat, lng, elev, epoch,
-        topocentric, pressure, temp, reg,
+        topocentric, pressure, temp, lsn, rsn, reg,
     )
     dest.unsafe_offset(8)[] = res[0]
     dest.unsafe_offset(9)[] = res[1]
@@ -2246,13 +2257,11 @@ def obj_planet(
     reg: Reg,
     dest: Ptr,
 ):
-    var mjed = mm_mjed(mj, reg)
-
-    # find solar ecliptical longitude and distance to sun from earth
-    var lsn, rsn, _ = sunpos(mjed, reg)
-
+    # The sun and the moon each run their own sunpos inside sun_cir/moon_cir,
+    # so they are dispatched before mm_mjed/sunpos are computed here. Upstream
+    # computes both and throws the results away; the values are provably dead
+    # on these two paths, and sunpos is ~20% of a solar compute.
     if p == 8:
-        # sun_cir computes its own sunpos, so defer to it
         sun_cir(
             mj, lat, lng, elev, epoch, topocentric, pressure, temp, reg, dest
         )
@@ -2261,9 +2270,17 @@ def obj_planet(
         moon_cir(mj, lat, lng, elev, epoch, topocentric, pressure, temp, reg, dest)
         return
 
+    var mjed = mm_mjed(mj, reg)
+
+    # find solar ecliptical longitude and distance to sun from earth; `bsn` is
+    # needed by the cartesian sun in plans, `lsn`/`rsn` by cir_sky and satrings
+    var lsn, rsn, bsn = sunpos(mjed, reg)
+
     # find helio long/lat; sun/planet and earth/planet dist; ecliptic
     # long/lat; diameter and mag.
-    var lpd, psi, rp, rho, lam, bet, dia, mag = plans(mjed, p, nrec, reg)
+    var lpd, psi, rp, rho, lam, bet, dia, mag = plans(
+        mjed, p, nrec, lsn, rsn, bsn, reg
+    )
 
     cir_sky(
         mjed, lpd, psi, rp, rho, lam, bet, lsn, rsn, p, mjd, lat, lng, elev,
@@ -2541,7 +2558,12 @@ def mpe_satrings(
 
 @export("mpe_plans")
 def mpe_plans(mj: Float64, p: Int, reg: Int, dst: Int) abi("C"):
-    var a, b, c, d, e, f, g, h = plans(mj, p, chap_nrec(p), regp(reg))
+    # plans() takes the solar geometry from its caller, so the standalone
+    # entry point computes it here. obj_planet passes its own sunpos in.
+    var lsn, rsn, bsn = sunpos(mj, regp(reg))
+    var a, b, c, d, e, f, g, h = plans(
+        mj, p, chap_nrec(p), lsn, rsn, bsn, regp(reg)
+    )
     var o = fp(dst)
     o.unsafe_offset(0)[] = a
     o.unsafe_offset(1)[] = b
@@ -2662,8 +2684,10 @@ def mpe_deflect(
     p.unsafe_offset(1)[] = dd
 
 
-# obj_planet for one date. `out` is a 16-float64 scratch the caller owns;
-# the field order is documented at the top of this section's Python twin.
+# obj_planet for one date. `dst` is a 17-element float64 scratch the caller
+# owns - the Obj field vector plus the mj that produced it - and this wrapper
+# clears all 17 before filling them. The field order is documented in
+# python/mojoephem/__init__.py next to the _F_* indices.
 @export("mpe_obj_planet")
 def mpe_obj_planet(
     mj: Float64,
@@ -2704,13 +2728,14 @@ comptime SERIES_PARALLEL_MIN: Int = 256
 # the common case just over SERIES_PARALLEL_MIN.
 comptime SERIES_MIN_DATES_PER_WORKER: Int = 64
 
-# Hard ceiling on workers. One worker per physical core is wrong here: each
-# worker is a real thread, and a core count taken from the host ignores the
-# pids.max of the container we were launched in, so the launch aborts the
-# whole process (`Fatal Python error: Aborted` from the ctypes caller). This
-# is a throughput/latency knob, not a correctness one - the serial path and
-# the worker-split path compute the same numbers.
-comptime SERIES_MAX_WORKERS: Int = 16
+# Ceiling on workers. This is a throughput/latency knob, not a correctness
+# one - the serial path and the worker-split path compute the same numbers.
+# num_physical_cores() is what the pool is sized from; it is capped only so a
+# host reporting an absurd core count cannot launch more threads than the
+# batch can keep busy. On this 36-core host the cap is not binding (nw is
+# already <= n // SERIES_MIN_DATES_PER_WORKER well before it) and lifting an
+# earlier cap of 16 to 36 took a 20000-date Sun batch from 54 ms to 30 ms.
+comptime SERIES_MAX_WORKERS: Int = 36
 
 
 def _series_one(

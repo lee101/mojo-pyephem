@@ -3,6 +3,30 @@
 Every entry point takes buffers as `Int` addresses and returns plain
 scalars, so the whole surface is `ctypes` + numpy views of caller-owned
 arrays.
+
+Buffer sizes are the caller's responsibility and are not checked at the ABI.
+Each kernel writes exactly as many `float64` slots as it has out-parameters;
+the sizes that matter are:
+
+    mpe_obj_planet        17  (the Obj field vector plus the mj that made it)
+    mpe_obj_planet_series  17 * n
+    mpe_plans              8
+    mpe_vsop87/chap95/
+    sunpos/planpos/
+    pluto_ell              3
+    mpe_moon               5
+    mpe_precess/nut_eq/
+    ab_ecl/ab_eq/
+    eq_ecl/ecl_eq/
+    aa_hadec/hadec_aa/     2
+    refract/unrefract/
+    obliquity/radec2ha
+    ...
+
+Getting this wrong writes past the end of the allocation, which in practice
+surfaces much later as a Bus error inside the dynamic loader rather than at
+the call. `mojoephem` itself only ever passes `_NFIELDS`-sized numpy views;
+see tests/test_exports.py for the size each kernel is driven with.
 """
 
 from __future__ import annotations

@@ -23,18 +23,27 @@ from datetime import datetime as _datetime
 from datetime import timedelta as _timedelta
 from datetime import tzinfo as _tzinfo
 from math import acos as _acos
-from math import cos as _cos
+from math import copysign as _copysign
 from math import fmod as _fmod
 from math import isnan as _isnan
 from math import pi as pi
 from math import radians as _radians
 from math import sin as _sin
+from math import cos as _cos
 from time import localtime as _localtime
 
 import numpy as np
 
 from . import _lib
 from . import _tables
+
+# Upstream's ephem/__init__.py does `from math import acos, cos, isnan, pi,
+# sin`, so those five names are part of its public surface and scripts do use
+# them. Re-export them under the same names.
+acos = _acos
+cos = _cos
+isnan = _isnan
+sin = _sin
 
 __version__ = "0.1.0"
 
@@ -154,27 +163,24 @@ _scansexa_split = re.compile(
 
 
 def _sexagesimal(text: str) -> float:
-    """Parse '51:28:40.2', '51 28 40.2' or '51.4778' as degrees."""
+    """Parse '51:28:40.2', '51 28 40.2' or '51.4778' as degrees.
+
+    Upstream accumulates from the least significant field inwards, dividing
+    by 60 before each step and taking the sign from the field it is adding.
+    That ordering is reproduced here so the last bit matches, not just the
+    value to within a rounding error.
+    """
     parts = _scansexa_split(text.strip())
     if not parts or not parts[0]:
         raise ValueError("could not parse angle %r" % (text,))
-    sign = 1.0
-    first = parts[0]
-    if first[0] in "+-":
-        if first[0] == "-":
-            sign = -1.0
-        first = first[1:]
-    values = [float(first)]
-    for extra in parts[1:]:
-        values.append(float(extra))
-    if len(values) > 3:
-        raise ValueError("too many fields in angle %r" % (text,))
-    total = values[0]
-    scale = 60.0
-    for v in values[1:]:
-        total += v / scale
-        scale *= 60.0
-    return sign * total
+    d = 0.0
+    for item in reversed(parts):
+        d /= 60.0
+        if not item or item.isspace():
+            continue  # an empty or blank field is zero, as upstream accepts
+        n = float(item)
+        d = _copysign(d, n) + n
+    return d
 
 
 def degrees(x):
@@ -203,15 +209,18 @@ def radians(x):
 # Date: a float of days since 1900 January 0.5, with the printing and
 # parsing behaviour of upstream's Date.
 _DATE_PATTERNS = (
-    # "YYYY/MM/DD", optionally with "HH:MM" or "HH:MM:SS" or ".ffffff"
+    # "YYYY/MM/DD", optionally with "HH:MM" or "HH:MM:SS" or ".ffffff".
+    # Every field carries an optional sign so that an out-of-range month or
+    # day reaches cal_mjd and is normalised there, the way upstream
+    # normalises it, rather than failing to match here.
     re.compile(
-        r"^\s*(-?\d+)[/-](\d+)[/-](\d+)"
+        r"^\s*(-?\d+)[/-](-?\d+)[/-](-?\d+)"
         r"(?:[ T]+(\d+):(\d+)(?::(\d+(?:\.\d+)?))?)?\s*$"
     ),
     # "M/D/YYYY", optionally with a time
     re.compile(
-        r"^\s*(\d+)[/-](\d+)[/-](-?\d+)"
-        r"(?:[ T]+(\d+):(\d+)(?::(\d+(?:\.\d+))?)?)?\s*$"
+        r"^\s*(-?\d+)[/-](-?\d+)[/-](-?\d+)"
+        r"(?:[ T]+(\d+):(\d+)(?::(\d+(?:\.\d+)?))?)?\s*$"
     ),
 )
 
@@ -243,6 +252,19 @@ class Date(float):
         """
         mn, dy, yr = _mjd_cal(float(self))
         return yr, mn, dy
+
+    def tuple(self):
+        """The date as a (year, month, day, hour, minute, second) tuple."""
+        return _mjd_six(float(self))
+
+    def datetime(self):
+        """The date as a naive datetime, as upstream's Date does.
+
+        Upstream truncates the seconds to an integer, so a date with a
+        fractional second rounds rather than keeps the fraction.
+        """
+        y, mo, d, H, M, S = _mjd_six(float(self))
+        return _datetime(y, mo, d, H, M, int(S))
 
     # Arithmetic keeps upstream's shape: a Date in, a Date out; a
     # difference of two Dates is a plain number of days; anything else
@@ -331,11 +353,18 @@ def _parse_mjd(value) -> float:
             year, month, day = int(year), int(month), int(day)
             H, M = int(H or 0), int(M or 0)
             S = float(S or 0)
-            if not (1 <= month <= 12 and 1 <= day <= 31 and 0 <= H < 24 and 0 <= M < 60):
-                raise ValueError("invalid date %r" % value)
-            if S >= 60:
-                raise ValueError("invalid seconds %r" % value)
-            # cal_mjd already returns midnight of the given calendar day.
+            # Upstream normalises rather than rejecting, and its cal_mjd
+            # already does the whole job: any month and day fold into the
+            # calendar (2024/13/1 is 2025/1/1, 2024/1/32 is 2024/2/1,
+            # 2024/-1/1 is 2023/11/1) and an out-of-range clock carries into
+            # the next day (25:00 is 01:00 the following morning). Only a
+            # literal zero is clamped up to 1, which is what upstream does.
+            # Rejecting any of this would be stricter than the package this
+            # mirrors, and date round-trips would break.
+            if month == 0:
+                month = 1
+            if day == 0:
+                day = 1
             base = _lib.lib().mpe_cal_mjd(month, float(day), year)
             return base + (H / 24.0 + M / 1440.0 + S / 86400.0)
         raise ValueError("unrecognized date %r" % (value,))
@@ -507,6 +536,65 @@ def utc_gst(date_value, utc_hours):
 _ZERO_DEGREES = Angle(0.0, _DEG_UNIT)
 
 
+def _as_angle(value) -> float:
+    """An angle in radians, from whatever form the caller used.
+
+    Upstream's parse_angle takes a number as radians and a string as
+    sexagesimal degrees; that is the same split this API uses everywhere, so
+    a float passes through and a string goes through the Angle parser.
+    """
+    if isinstance(value, str):
+        return _radians(_sexagesimal(value))
+    return float(value)
+
+
+_pair2 = (ctypes.c_double * 2)()
+_pair2_addr = ctypes.addressof(_pair2)
+
+
+def _aa_hadec(lt: float, alt: float, az: float):
+    """(hour angle, declination) in radians from latitude, alt and az."""
+    _fn("mpe_aa_hadec")(lt, alt, az, _pair2_addr)
+    return _pair2[0], _pair2[1]
+
+
+def _hadec_aa(lt: float, ha: float, dec: float):
+    """(altitude, azimuth) in radians from latitude, hour angle and dec."""
+    _fn("mpe_hadec_aa")(lt, ha, dec, _pair2_addr)
+    return _pair2[0], _pair2[1]
+
+
+def _ap_as(mjd: float, epoch: float, ra: float, dec: float):
+    """Precess and nutate a place from the epoch of mjd to `epoch`.
+
+    This is libastro's ap_as(): the position is first taken to the mean
+    equinox and mean equator of `epoch` by rigorous precession, then the
+    nutation of `epoch` is applied to it.
+    """
+    _pair2[0], _pair2[1] = ra, dec
+    _precess_entry = _fn("mpe_precess")
+    _precess_entry(epoch, mjd, _pair2_addr)
+    _fn("mpe_nut_eq")(epoch, _reg(), _pair2_addr)
+    return _pair2[0], _pair2[1]
+
+
+_sphere = (ctypes.c_double * 2)()
+_sphere_addr = ctypes.addressof(_sphere)
+
+
+def _parallactic_lhd(lt: float, ha: float, dec: float) -> float:
+    """libastro's parallacticLHD: the angle is between -PI and PI.
+
+    It is solve_sphere with the observer's latitude as the third side, which
+    is why the kernel is exported.
+    """
+    _fn("mpe_solve_sphere")(
+        ha, halfpi - lt, _sin(dec), _cos(dec), _sphere_addr
+    )
+    B = _sphere[1]
+    return B - twopi if B > pi else B
+
+
 def separation(p, q):
     """The angular separation between two objects or positions."""
     try:
@@ -642,6 +730,25 @@ class Observer:
         lst = now_lst(float(self.date), self._lon_radians())
         return Angle(lst * 15.0 * pi / 180.0, 12.0 / pi)
 
+    def radec_of(self, az, alt):
+        """The right ascension and declination of a point given by azimuth
+        and altitude, as upstream's Observer method does.
+
+        The altitude is unrefracted before the conversion, and a non-default
+        `epoch` is precessed the way `ap_as` precesses it, so both arguments
+        may be strings, Angles or plain radians as upstream accepts.
+        """
+        az = _as_angle(az)
+        alt = _as_angle(alt)
+        lst = now_lst(float(self.date), self._lon_radians())
+        # unrefract to the true altitude, then to hour angle and declination
+        alt = float(unrefract(self.pressure, self.temp, alt))
+        ha, dec = _aa_hadec(self._lat_radians(), alt, az)
+        ra = _fmod(lst * 15.0 * pi / 180.0 - ha, twopi)
+        if float(self._epoch) != J2000:
+            ra, dec = _ap_as(float(self.date), float(self._epoch), ra, dec)
+        return hours(ra), degrees(dec)
+
     def compute_pressure(self):
         """Set the atmospheric pressure for the current elevation."""
         self.pressure = 1010.0 * pow(1.0 - 2.2557e-5 * self.elevation, 5.2568)
@@ -754,6 +861,10 @@ class Body:
         self.name = kw.pop("name", None)
         self._computed = False
         self._topocentric = False
+        # the Observer the last compute() was given, kept because
+        # parallactic_angle is measured relative to a specific site, exactly as
+        # upstream keeps body->now. It is None for a Date-only compute.
+        self._observer = None
         self._fields = np.zeros(_NFIELDS)
         # the field vector never moves, so its address is paid for once
         self._addr = self._fields.ctypes.data
@@ -763,6 +874,7 @@ class Body:
     def compute(self, when):
         """(Re)compute this body's circumstances for a Date or Observer."""
         self._fields = _compute(self.__planet__, when, self._fields, self._addr)
+        self._observer = when if isinstance(when, Observer) else None
         self._topocentric = isinstance(when, Observer)
         self._computed = True
         return self
@@ -835,6 +947,23 @@ class Body:
     @property
     def alt(self):
         return degrees(self._require("alt", True)[_F_ALT])
+
+    def parallactic_angle(self):
+        """The parallactic angle to this body, as upstream's Body method does.
+
+        It is the angle at the object between the celestial pole and the
+        zenith, so it always needs a site: upstream raises if the last
+        compute() was given a plain Date, and so does this. The result is
+        normalised to (-pi, pi], which is upstream's Angle.znorm.
+        """
+        fields = self._require("parallactic_angle", True)
+        obs = self._observer
+        # upstream: radec2ha(now, s_astrora, s_astrodec, &ha), then
+        # pa = parallacticLHD(now.n_lat, ha, s_astrodec), then Angle_znorm.
+        # The hour angle is already in the field vector, so it is used here
+        # rather than recomputed from the sidereal time.
+        pa = _parallactic_lhd(obs._lat_radians(), fields[_F_HA], fields[_F_ASTRO_DEC])
+        return Angle(pa, _DEG_UNIT).znorm
 
     # Planet_getset
     @property
@@ -1203,8 +1332,8 @@ def next_winter_solstice(date):
 # Common synonyms.
 next_spring_equinox = next_vernal_equinox
 previous_spring_equinox = previous_vernal_equinox
-next_fall_equinox = next_autumnal_equinox = next_autumnal_equinox
-previous_fall_equinox = previous_autumnal_equinox = previous_autumnal_equinox
+next_fall_equinox = next_autumn_equinox = next_autumnal_equinox
+previous_fall_equinox = previous_autumn_equinox = previous_autumnal_equinox
 
 
 # More-general functions that find any equinox or solstice.
