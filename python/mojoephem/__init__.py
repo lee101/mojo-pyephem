@@ -17,6 +17,7 @@ covered.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import ctypes
 import re
 from datetime import datetime as _datetime
@@ -46,6 +47,12 @@ isnan = _isnan
 sin = _sin
 
 __version__ = "0.1.0"
+
+# Mirrors SERIES_PARALLEL_MIN / SERIES_MIN_DATES_PER_WORKER in src/ported.mojo.
+# They gate the batch kernel's own worker split; the Python fan-out below uses
+# the same two numbers so both paths split a batch the same way.
+_SERIES_PARALLEL_MIN = 256
+_SERIES_MIN_DATES_PER_WORKER = 64
 
 # ------------------------------------------------------------------
 # Constants, from upstream ephem/__init__.py.
@@ -809,6 +816,26 @@ def _compute(planet: int, when, buf: np.ndarray, addr: int) -> np.ndarray:
         )
     return buf
 
+_FANOUT_MAX_WORKERS = 16
+
+# Set on first use; kept so later batches reuse the same workers.
+_fanout_pool: ThreadPoolExecutor | None = None
+
+
+def _fanout_pool_for(nchunks: int) -> ThreadPoolExecutor:
+    """The batch fan-out pool, created once and reused.
+
+    Threads are expensive to create and the cap on this host is tight, so the
+    pool is sized on first use and then kept: a second batch reuses the same
+    workers instead of racing the interpreter for slots again.
+    """
+    global _fanout_pool
+    if _fanout_pool is None:
+        _fanout_pool = ThreadPoolExecutor(
+            max_workers=nchunks, thread_name_prefix="mpe-series"
+        )
+    return _fanout_pool
+
 
 def compute_series(planet: int, dates, when: Observer | None = None):
     """Positions of one body across many dates, in one Mojo call.
@@ -837,20 +864,57 @@ def compute_series(planet: int, dates, when: Observer | None = None):
             when.pressure,
             when.temp,
         )
-    _fn("mpe_obj_planet_series")(
-        mjs.ctypes.data,
-        out.ctypes.data,
-        n,
-        planet,
-        lat,
-        lng,
-        elev,
-        epoch,
-        topocentric,
-        pressure,
-        temp,
-        _reg(),
+    args = (
+        planet, lat, lng, elev, epoch, topocentric, pressure, temp, _reg(),
     )
+    series = _fn("mpe_obj_planet_series")
+
+    def run(lo: int, hi: int, budget: int) -> None:
+        series(
+            mjs[lo:hi].ctypes.data,
+            out[lo:hi].ctypes.data,
+            hi - lo,
+            *args,
+            budget,
+        )
+
+    if n < _SERIES_PARALLEL_MIN:
+        run(0, n, 1)
+        return out
+
+    budget = _lib.thread_budget()
+    if budget.pool_fits:
+        # The kernel splits the batch across MAX's worker pool itself.
+        run(0, n, budget.as_kernel_arg())
+        return out
+
+    # MAX's pool does not fit on this host. The dates are still independent,
+    # so the same work is fanned out over Python threads, which release the GIL
+    # inside the FFI call; the per-row arithmetic is the kernel's, unchanged.
+    chunks = min(
+        _lib.thread_budget().spare,
+        n // _SERIES_MIN_DATES_PER_WORKER,
+        _FANOUT_MAX_WORKERS,
+    )
+    if chunks < 2:
+        run(0, n, 1)
+        return out
+    step = -(-n // chunks)
+    bounds = [(lo, min(lo + step, n)) for lo in range(0, n, step)]
+
+    pool = _fanout_pool_for(len(bounds))
+    futures = []
+    try:
+        for lo, hi in bounds:
+            futures.append(pool.submit(run, lo, hi, 1))
+    except RuntimeError:
+        # Another library took the slots between measuring and spawning. The
+        # unscheduled chunks run here instead, so the batch still completes.
+        pass
+    for fut in futures:
+        fut.result()
+    for lo, hi in bounds[len(futures):]:
+        run(lo, hi, 1)
     return out
 
 

@@ -322,3 +322,61 @@ def test_chap95_uses_each_planet_own_record_count():
     # each planet must land near its own semimajor axis, in au
     assert 4.5 < math.sqrt(sum(x * x for x in jupiter)) < 6.0
     assert 8.0 < math.sqrt(sum(x * x for x in saturn)) < 11.0
+
+
+def _series_via(rows: int, budget) -> np.ndarray:
+    """compute_series with the thread budget forced to `budget`."""
+    start = float(mojoephem.Date("2023/1/1"))
+    dates = np.linspace(start, start + rows, rows)
+    saved = mojoephem._lib._BUDGET
+    mojoephem._lib._BUDGET = budget
+    try:
+        return mojoephem.compute_series(mojoephem.Moon.__planet__, dates)
+    finally:
+        mojoephem._lib._BUDGET = saved
+
+
+def _budget_without_pool(spare: int) -> "mojoephem._lib.ThreadBudget":
+    """A budget for a host on which MAX's worker pool cannot spawn.
+
+    `pool_fits` is the host's own verdict on two measured numbers,
+    `spare >= needed`, so the way to pin the fan-out is to report a pool
+    requirement the host cannot meet. Overriding the verdict instead would
+    build a budget that contradicts itself, and `as_kernel_arg()` would then
+    answer from a premise its own fields deny.
+    """
+    from mojoephem._lib import ThreadBudget
+
+    return ThreadBudget(spare=spare, needed=spare + 1)
+
+
+def test_compute_series_fanout_matches_the_scalar_kernel():
+    """The Python fan-out splits the batch; every row must still be the same.
+
+    Forcing `pool_fits` False pins the path that chunks one batch across
+    Python threads instead of MAX's worker pool. The chunk boundaries land
+    mid-batch, so a row computed from the wrong slice would show up here.
+    """
+    serial = _series_via(1000, _budget_without_pool(0))
+    for spare in (2, 3, 5, 8):
+        fanned = _series_via(1000, _budget_without_pool(spare))
+        assert np.array_equal(fanned, serial), f"spare={spare} changed a row"
+
+    # and against the scalar kernel the batch is supposed to repeat
+    start = float(mojoephem.Date("2023/1/1"))
+    dates = np.linspace(start, start + 1000, 1000)
+    for i in (0, 1, 2, 17, 511, 998, 999):
+        body = mojoephem.Moon(dates[i])
+        body.compute(dates[i])
+        assert body._fields[mojoephem._F_GAERA] == serial[i, 8]
+        assert body._fields[mojoephem._F_EDIST] == serial[i, 3]
+
+
+def test_thread_budget_reports_a_usable_headroom():
+    """The measurement must hand the kernel a worker count it can honour."""
+    budget = mojoephem._lib.thread_budget()
+    assert budget.spare >= 0
+    assert budget.as_kernel_arg() >= 1
+    # pool_fits means "MAX's whole pool will spawn", which is a property of the
+    # host, so it must be stable across calls.
+    assert budget.pool_fits == mojoephem._lib.thread_budget().pool_fits

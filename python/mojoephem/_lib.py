@@ -36,15 +36,82 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 LIB = Path(os.environ.get("MOJOPHYPHEM_LIB") or ROOT / "dist" / "libmojo-pyephem.so")
-
 I = ctypes.c_int64
 F = ctypes.c_double
 P = ctypes.c_void_p
+
+
+_BUDGET: "ThreadBudget | None" = None
+
+
+class ThreadBudget(NamedTuple):
+    """What this process may safely do with threads, measured not assumed."""
+
+    spare: int
+    """Threads still creatable on top of the ones already running."""
+
+    needed: int
+    """Threads MAX's pool needs, plus the margin demanded to risk it."""
+
+    @property
+    def pool_fits(self) -> bool:
+        """Whether MAX's worker pool can be spawned without killing us.
+
+        The margin is not paranoia for its own sake: the cap on a constrained
+        host sits right at the logical CPU count, which is exactly the size of
+        the pool MAX wants, so a probe that squeaks past by two threads is
+        measuring the boundary rather than the room. Anything short of the
+        margin takes the fan-out instead, which degrades instead of aborting.
+        """
+        return self.spare >= self.needed
+
+    def as_kernel_arg(self) -> int:
+        """The `budget` the batch kernel clamps its worker count against."""
+        return self.needed if self.pool_fits else 1
+
+
+def thread_budget() -> ThreadBudget:
+    """Measure the host's thread headroom once, the safe way.
+
+    MAX builds its worker pool from the logical CPU count and spawns the whole
+    pool eagerly on the first `parallelize()`. A host that caps threads per
+    process - containers, CI runners - then loses the entire process to
+    `LLVM ERROR: pthread_create failed`, which no exception can intercept.
+    The cap is not readable from any API, but it is discoverable by trying:
+    Python raises instead of aborting, so the caller learns the real number and
+    can pick a path that fits. Measured lazily, on the first batched call.
+    """
+    global _BUDGET
+    if _BUDGET is not None:
+        return _BUDGET
+    import threading
+
+    cores = os.cpu_count() or 1
+    release = threading.Event()
+    live: list[threading.Thread] = []
+    try:
+        for _ in range(cores + 1):
+            t = threading.Thread(target=release.wait, daemon=True)
+            t.start()
+            live.append(t)
+    except RuntimeError:
+        pass
+    spare = len(live)
+    release.set()
+    # Join before returning: the next thing the caller does is spawn real
+    # workers, and a probe thread that has not exited yet is still holding a
+    # slot against a cap we just measured to be tight.
+    for t in live:
+        t.join(timeout=5.0)
+    # One slot stays free for the interpreter itself.
+    _BUDGET = ThreadBudget(spare=max(0, spare - 1), needed=cores + cores // 4)
+    return _BUDGET
 
 # name -> (argtypes, restype)
 _SIGNATURES: dict[str, tuple[list, object]] = {
@@ -95,7 +162,10 @@ _SIGNATURES: dict[str, tuple[list, object]] = {
     "mpe_elongation": ([F, F, F, P], None),
     "mpe_deflect": ([F, F, F, F, F, F, P, P], None),
     "mpe_obj_planet": ([F, I, F, F, F, F, I, F, F, P, P], None),
-    "mpe_obj_planet_series": ([P, P, I, I, F, F, F, F, I, F, F, P], None),
+    "mpe_obj_planet_series": (
+        [P, P, I, I, F, F, F, F, I, F, F, P, I],
+        None,
+    ),
 }
 
 

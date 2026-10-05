@@ -195,10 +195,9 @@ def _():
 def _():
     ra = np.linspace(0.0, 6.28, 200_000)
     dec = np.linspace(-1.5, 1.5, 200_000)
-    lib = ephem._libastro
     pairs = list(zip(ra, dec))
     return (
-        lambda: [lib.precess(ephem.J2000, 45290.5, a, b) for a, b in pairs],
+        lambda: [ephem.precess(ephem.J2000, 45290.5, a, b) for a, b in pairs],
         lambda: [msk.precess(msk.J2000, 45290.5, a, b) for a, b in pairs],
     )
 

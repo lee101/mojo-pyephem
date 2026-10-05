@@ -9,7 +9,11 @@ version = "0.1.0"
 build = "bash build/build.sh"
 data = "bash build/data.sh"
 test = "python -m pytest tests -q"
-bench = "flock /tmp/mojo-bench.lock python bench/bench.py"
+# OPENBLAS_NUM_THREADS=1 is not a tuning choice: this host caps threads per
+# process at ~70, numpy's default pool wants one per logical CPU, and OpenBLAS
+# then hangs retrying pthread_create at import. Neither side of the comparison
+# uses BLAS, so a single thread costs nothing and keeps the run reproducible.
+bench = "flock /tmp/mojo-bench.lock env OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 python bench/bench.py"
 
 [activation.env]
 PYTHONPATH = "python"

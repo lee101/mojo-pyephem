@@ -1308,7 +1308,7 @@ def test_mpe_obj_planet_series_matches_the_scalar_kernel():
     batch = np.zeros((dates.size, 17))
     lib().mpe_obj_planet_series(
         dates.ctypes.data, batch.ctypes.data, dates.size,
-        mojoephem.Moon.__planet__, 0.0, 0.0, 0.0, J2000, 0, 0.0, 15.0, _REG,
+        mojoephem.Moon.__planet__, 0.0, 0.0, 0.0, J2000, 0, 0.0, 15.0, _REG, 1,
     )
     single, addr = out(17)
     for i in (0, 1, 137, 299):
@@ -1321,20 +1321,52 @@ def test_mpe_obj_planet_series_matches_the_scalar_kernel():
 
 
 def test_mpe_obj_planet_series_writes_every_row():
-    """Sizes that do not divide the worker count still fill every row.
+    """Sizes around the parallel threshold all fill every row.
 
-    256 is the parallel threshold and 64 the per-worker minimum, so this
-    straddles both: 257 dates over 4 workers leaves the last chunk short, and
-    1000 over 15 leaves the last two.
+    Budget 1 pins the serial loop, so this covers the threshold edges
+    (1, 63, 64, 255, 256, 257, 511, 1000 dates) without launching workers.
     """
     for n in (1, 2, 63, 64, 255, 256, 257, 511, 1000):
         dates = np.array([MJ + i * 0.5 for i in range(n)])
         arr = np.full((n, 17), -7.0)
         lib().mpe_obj_planet_series(
             dates.ctypes.data, arr.ctypes.data, n, mojoephem.Sun.__planet__,
-            0.0, 0.0, 0.0, J2000, 0, 0.0, 15.0, _REG,
+            0.0, 0.0, 0.0, J2000, 0, 0.0, 15.0, _REG, 1,
         )
         assert -7.0 not in arr, f"n={n} left a row unwritten"
         for i in (0, n // 2, n - 1):
             assert arr[i, 16] == dates[i]
             assert arr[i, 8] != 0.0 or arr[i, 16] != dates[i]  # the row is real
+
+
+def test_mpe_obj_planet_series_honours_the_budget_argument():
+    """`budget` clamps the worker count without changing a single number.
+
+    200 dates is under SERIES_PARALLEL_MIN, so every budget here stays on the
+    serial loop and the two calls must agree bit for bit - which is the point:
+    the argument is read, and it is a scheduling knob only.
+    """
+    dates = np.array([MJ + i * 0.5 for i in range(200)])
+    runs = []
+    for budget in (1, 2, 8, 64):
+        arr = np.full((dates.size, 17), -7.0)
+        lib().mpe_obj_planet_series(
+            dates.ctypes.data, arr.ctypes.data, dates.size,
+            mojoephem.Sun.__planet__, 0.0, 0.0, 0.0, J2000, 0, 0.0, 15.0,
+            _REG, budget,
+        )
+        runs.append(arr)
+    for arr in runs[1:]:
+        assert np.array_equal(arr, runs[0]), "budget changed the result"
+    assert not np.any(runs[0] == -7.0)
+
+
+def test_mpe_obj_planet_series_rejects_a_negative_budget():
+    """A budget below 1 must not index out of bounds; it means 'no workers'."""
+    dates = np.array([MJ + i * 0.5 for i in range(4)])
+    arr = np.full((4, 17), -7.0)
+    lib().mpe_obj_planet_series(
+        dates.ctypes.data, arr.ctypes.data, 4, mojoephem.Sun.__planet__,
+        0.0, 0.0, 0.0, J2000, 0, 0.0, 15.0, _REG, 0,
+    )
+    assert not np.any(arr == -7.0)

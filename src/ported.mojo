@@ -2730,12 +2730,17 @@ comptime SERIES_MIN_DATES_PER_WORKER: Int = 64
 
 # Ceiling on workers. This is a throughput/latency knob, not a correctness
 # one - the serial path and the worker-split path compute the same numbers.
-# num_physical_cores() is what the pool is sized from; it is capped only so a
-# host reporting an absurd core count cannot launch more threads than the
-# batch can keep busy. On this 36-core host the cap is not binding (nw is
-# already <= n // SERIES_MIN_DATES_PER_WORKER well before it) and lifting an
-# earlier cap of 16 to 36 took a 20000-date Sun batch from 54 ms to 30 ms.
 comptime SERIES_MAX_WORKERS: Int = 36
+
+
+# MAX sizes its worker pool from the logical CPU count and spawns the whole
+# pool eagerly on the first parallelize() call. A host that caps threads per
+# process (containers, CI runners) then aborts the caller's process with
+# `LLVM ERROR: pthread_create failed`, which no `try:` can intercept - the port
+# would take the host down rather than lose the speedup. `budget` is the
+# caller's measured thread headroom (see _worker_budget in the Python layer);
+# a value below 2 means "do not launch", so an over-subscribed host silently
+# takes the serial loop below instead of dying.
 
 
 def _series_one(
@@ -2813,12 +2818,15 @@ def mpe_obj_planet_series(
     pressure: Float64,
     temp: Float64,
     reg: Int,
+    budget: Int,
 ) abi("C"):
     var src = fp(mjs)
     var nrec = chap_nrec(p)
     var r = regp(reg)
     var dest = fp(dst)
     var nw = num_physical_cores()
+    if nw > budget:
+        nw = budget
     if nw > SERIES_MAX_WORKERS:
         nw = SERIES_MAX_WORKERS
     var by_work = n // SERIES_MIN_DATES_PER_WORKER
